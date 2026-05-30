@@ -123,9 +123,9 @@ const botPool = tokens.map((token, index) => {
 });
 
 // Smart selection of next available bot
-const getAvailableBot = () => {
+const getAvailableBot = (excludedBotIds = []) => {
     const now = Date.now();
-    const available = botPool.filter(bot => bot.ready && now >= bot.cooldownUntil);
+    const available = botPool.filter(bot => bot.ready && now >= bot.cooldownUntil && !excludedBotIds.includes(bot.id));
     if (available.length === 0) return null;
     
     // Pick the bot that has the oldest lastBumpTime (i.e. least recently used)
@@ -153,9 +153,17 @@ const scheduleNextBump = (server, customInterval = null) => {
     bumpTimers.set(server.channelId, timerId);
 };
 
-const bumpServer = async (server) => {
-    const bot = getAvailableBot();
+const bumpServer = async (server, excludedBotIds = []) => {
+    const bot = getAvailableBot(excludedBotIds);
     if (!bot) {
+        const readyBotsCount = botPool.filter(b => b.ready).length;
+        if (readyBotsCount > 0 && excludedBotIds.length >= readyBotsCount) {
+            console.log(`❌ [${server.name}] All online bots failed to bump. Scheduling next bump in 2 hours.`);
+            server.lastStatus = "❌ All bots failed";
+            scheduleNextBump(server);
+            return;
+        }
+
         console.log(`⏳ [${server.name}] No available bot accounts. Retrying in 1 minute...`);
         server.lastStatus = "⏳ Waiting for free bot";
         server.nextBumpTime = Date.now() + 60000;
@@ -174,13 +182,11 @@ const bumpServer = async (server) => {
     console.log(`🤖 [${server.name}] Selected bot ${bot.tag} for this bump.`);
 
     try {
-        const channel = await clientToUse.channels.fetch(server.channelId);
+        const channel = await clientToUse.channels.fetch(server.channelId).catch(() => null);
         if (!channel) {
-            console.log(`❌ [${server.name}] Could not find channel ${server.channelId} for bot ${bot.tag}`);
-            globalStats.failedBumps++;
-            server.lastStatus = `❌ Channel not found (${botShortTag})`;
-            saveStats();
-            scheduleNextBump(server);
+            console.log(`❌ [${server.name}] Could not find channel ${server.channelId} for bot ${bot.tag}. Retrying with another bot...`);
+            excludedBotIds.push(bot.id);
+            setTimeout(() => bumpServer(server, excludedBotIds), 2000);
             return;
         }
 
@@ -234,7 +240,7 @@ const bumpServer = async (server) => {
                     bot.cooldownUntil = Date.now() + (minutesToWait * 60 * 1000) + 10000;
                     server.lastStatus = "⏰ Bot on cooldown, retrying next...";
                     saveStats();
-                    setTimeout(() => bumpServer(server), 2000);
+                    setTimeout(() => bumpServer(server, excludedBotIds), 2000);
                 } else {
                     console.log(`⏳ [${server.name}] Server is on cooldown for ${minutesToWait} mins. Rescheduling server.`);
                     server.lastStatus = `⏰ Server Cooldown (${minutesToWait}m)`;
@@ -262,7 +268,9 @@ const bumpServer = async (server) => {
         globalStats.failedBumps++;
         server.lastStatus = `❌ ${e.message.substring(0, 50)}`;
         saveStats();
-        scheduleNextBump(server);
+        
+        excludedBotIds.push(bot.id);
+        setTimeout(() => bumpServer(server, excludedBotIds), 2000);
     }
 };
 
