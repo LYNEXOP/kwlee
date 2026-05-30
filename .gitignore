@@ -1,6 +1,7 @@
 # Secret files — NEVER push these
 .env
 servers.json
+stats.json
 
 # Dependencies — install with npm i
 node_modules/
