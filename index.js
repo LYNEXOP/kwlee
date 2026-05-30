@@ -144,11 +144,15 @@ client.on('ready', async () => {
                 const reply = collected.first();
                 const content = (reply.content || '') + (reply.embeds?.map(e => e.description || '').join(' ') || '');
                 
-                if (content.toLowerCase().includes('bump done') || content.toLowerCase().includes('bumped')) {
+                const contentLower = content.toLowerCase();
+                const successWords = ['bump done', 'bumped', 'erfolgreich', 'sucesso', 'éxito', 'succès', 'succes', 'başarılı', 'sukces', 'успешно', '成功'];
+                const waitWords = ['wait', 'cooldown', 'minute', 'minuten', 'minutos', 'dakika', 'minut', 'warte', '分钟', '分'];
+
+                if (successWords.some(w => contentLower.includes(w))) {
                     console.log(`✅ [${server.name}] VERIFIED — Disboard confirmed bump!`);
                     globalStats.totalBumps++;
                     server.lastStatus = "✅ Verified";
-                } else if (content.toLowerCase().includes('wait') || content.toLowerCase().includes('cooldown') || content.toLowerCase().includes('minutes')) {
+                } else if (waitWords.some(w => contentLower.includes(w))) {
                     console.log(`⏰ [${server.name}] COOLDOWN — Disboard says wait. Response: ${content.substring(0, 100)}`);
                     globalStats.failedBumps++;
                     server.lastStatus = "⏰ On Cooldown";
