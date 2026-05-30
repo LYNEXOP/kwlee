@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Selfbot Control Panel</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background-orb orb-1"></div>
+    <div class="background-orb orb-2"></div>
+    
+    <div class="container glass-panel">
+        <header>
+            <h1>Selfbot Control</h1>
+            <p>Deploy your bumper to a new server instantly</p>
+        </header>
+
+        <form id="addServerForm">
+            <div class="input-group">
+                <label for="inviteLink">Server Invite Link</label>
+                <input type="text" id="inviteLink" name="inviteLink" placeholder="https://discord.gg/yourlink" required>
+            </div>
+            
+            <div class="input-group">
+                <label for="channelId">Target Channel ID</label>
+                <input type="text" id="channelId" name="channelId" placeholder="123456789012345678" required>
+            </div>
+
+            <button type="submit" id="submitBtn">
+                <span class="btn-text">Join & Start Bumping</span>
+                <span class="loader hidden"></span>
+            </button>
+        </form>
+
+        <div id="statusMessage" class="status hidden"></div>
+
+        <div class="divider"></div>
+
+        <header class="dashboard-header">
+            <h2>Live Analytics</h2>
+            <button id="refreshBtn" class="icon-btn" title="Refresh Dashboard">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            </button>
+        </header>
+
+        <div class="metrics-grid">
+            <div class="metric-card success-card">
+                <div class="metric-value" id="totalBumpsVal">0</div>
+                <div class="metric-label">Successful Bumps</div>
+            </div>
+            <div class="metric-card error-card">
+                <div class="metric-value" id="failedBumpsVal">0</div>
+                <div class="metric-label">Failed Bumps</div>
+            </div>
+        </div>
+
+        <div class="servers-list" id="serversList">
+            <!-- Server items will be injected here -->
+            <div class="server-item empty-state">Loading servers...</div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('addServerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const btn = document.getElementById('submitBtn');
+            const btnText = btn.querySelector('.btn-text');
+            const loader = btn.querySelector('.loader');
+            const statusMsg = document.getElementById('statusMessage');
+
+            const inviteLink = document.getElementById('inviteLink').value;
+            const channelId = document.getElementById('channelId').value;
+
+            // UI Loading state
+            btn.disabled = true;
+            btnText.classList.add('hidden');
+            loader.classList.remove('hidden');
+            statusMsg.className = 'status hidden';
+
+            try {
+                const response = await fetch('/api/add-server', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inviteLink, channelId })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    statusMsg.textContent = data.message;
+                    statusMsg.className = 'status success visible';
+                    document.getElementById('addServerForm').reset();
+                } else {
+                    statusMsg.textContent = data.error || 'An error occurred';
+                    statusMsg.className = 'status error visible';
+                }
+            } catch (err) {
+                statusMsg.textContent = 'Failed to connect to the server.';
+                statusMsg.className = 'status error visible';
+            } finally {
+                // UI Reset state
+                btn.disabled = false;
+                btnText.classList.remove('hidden');
+                loader.classList.add('hidden');
+                // Refresh dashboard after adding
+                fetchStats();
+            }
+        });
+
+        // Dashboard Logic
+        const formatCountdown = (targetTime) => {
+            if (!targetTime) return "Unknown";
+            const diff = targetTime - Date.now();
+            if (diff <= 0) return "Any moment now...";
+            const mins = Math.floor(diff / 60000);
+            return `in ${mins} min${mins !== 1 ? 's' : ''}`;
+        };
+
+        const fetchStats = async () => {
+            const refreshBtn = document.getElementById('refreshBtn');
+            refreshBtn.classList.add('spinning');
+
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                
+                // Update global metrics
+                document.getElementById('totalBumpsVal').textContent = data.global.totalBumps;
+                document.getElementById('failedBumpsVal').textContent = data.global.failedBumps;
+
+                // Update server list
+                const listContainer = document.getElementById('serversList');
+                listContainer.innerHTML = '';
+
+                if (data.servers.length === 0) {
+                    listContainer.innerHTML = '<div class="server-item empty-state">No servers active</div>';
+                } else {
+                    data.servers.forEach(server => {
+                        const div = document.createElement('div');
+                        div.className = 'server-item';
+                        
+                        let statusClass = 'status-waiting';
+                        if (server.lastStatus.includes('Success')) statusClass = 'status-success';
+                        if (server.lastStatus.includes('Failed') || server.lastStatus.includes('Cancelled')) statusClass = 'status-error';
+
+                        const isCancelled = server.lastStatus.includes('Cancelled');
+
+                        div.innerHTML = `
+                            <div class="server-info">
+                                <div class="server-name">${server.name}</div>
+                                <div class="server-status ${statusClass}">${server.lastStatus}</div>
+                            </div>
+                            <div class="server-actions">
+                                <div class="server-time">
+                                    <div class="time-label">Next Bump</div>
+                                    <div class="time-value">${isCancelled ? '—' : formatCountdown(server.nextBumpTime)}</div>
+                                </div>
+                                <button class="cancel-btn ${isCancelled ? 'cancelled' : ''}" 
+                                    data-channel="${server.channelId}" 
+                                    ${isCancelled ? 'disabled' : ''}>
+                                    ${isCancelled ? 'Cancelled' : '⏹ Stop'}
+                                </button>
+                            </div>
+                        `;
+                        listContainer.appendChild(div);
+                    });
+
+                    // Attach cancel button listeners
+                    listContainer.querySelectorAll('.cancel-btn:not([disabled])').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const channelId = btn.dataset.channel;
+                            btn.disabled = true;
+                            btn.textContent = '...';
+                            try {
+                                const res = await fetch('/api/cancel-server', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ channelId })
+                                });
+                                if (res.ok) {
+                                    btn.textContent = 'Cancelled';
+                                    btn.classList.add('cancelled');
+                                    // Update the status text next to it
+                                    const item = btn.closest('.server-item');
+                                    item.querySelector('.server-status').textContent = '❌ Cancelled';
+                                    item.querySelector('.server-status').className = 'server-status status-error';
+                                    item.querySelector('.time-value').textContent = '—';
+                                } else {
+                                    btn.disabled = false;
+                                    btn.textContent = '⏹ Stop';
+                                }
+                            } catch(e) {
+                                btn.disabled = false;
+                                btn.textContent = '⏹ Stop';
+                            }
+                        });
+                    });
+                }
+            } catch (e) {
+                console.error("Failed to fetch stats", e);
+            } finally {
+                setTimeout(() => refreshBtn.classList.remove('spinning'), 500);
+            }
+        };
+
+        document.getElementById('refreshBtn').addEventListener('click', fetchStats);
+
+        // Initial fetch
+        fetchStats();
+    </script>
+</body>
+</html>
