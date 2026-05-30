@@ -56,6 +56,19 @@
             </div>
         </div>
 
+        <div class="divider"></div>
+
+        <header class="dashboard-header">
+            <h2>Bot Accounts Status</h2>
+        </header>
+
+        <div class="bots-grid" id="botsList">
+            <!-- Bot statuses will be injected here -->
+            <div class="bot-card">Loading bot accounts...</div>
+        </div>
+
+        <div class="divider"></div>
+
         <div class="servers-list" id="serversList">
             <!-- Server items will be injected here -->
             <div class="server-item empty-state">Loading servers...</div>
@@ -130,6 +143,48 @@
                 // Update global metrics
                 document.getElementById('totalBumpsVal').textContent = data.global.totalBumps;
                 document.getElementById('failedBumpsVal').textContent = data.global.failedBumps;
+
+                // Update bots list
+                const botsContainer = document.getElementById('botsList');
+                botsContainer.innerHTML = '';
+                
+                if (data.bots && data.bots.length > 0) {
+                    data.bots.forEach(bot => {
+                        const div = document.createElement('div');
+                        div.className = 'bot-card-item';
+                        
+                        let statusText = 'Offline';
+                        let statusClass = 'status-waiting';
+                        
+                        if (bot.ready) {
+                            if (bot.error) {
+                                statusText = `Error: ${bot.error}`;
+                                statusClass = 'status-error';
+                            } else if (Date.now() < bot.cooldownUntil) {
+                                const diff = bot.cooldownUntil - Date.now();
+                                const mins = Math.ceil(diff / 60000);
+                                statusText = `On Cooldown (${mins}m remaining)`;
+                                statusClass = 'status-waiting';
+                            } else {
+                                statusText = 'Ready & Idle';
+                                statusClass = 'status-success';
+                            }
+                        } else if (bot.error) {
+                            statusText = `Failed: ${bot.error}`;
+                            statusClass = 'status-error';
+                        }
+                        
+                        div.innerHTML = `
+                            <div class="bot-card-info">
+                                <div class="bot-card-tag">${bot.tag || `Bot #${bot.id}`}</div>
+                                <div class="bot-card-status ${statusClass}">${statusText}</div>
+                            </div>
+                        `;
+                        botsContainer.appendChild(div);
+                    });
+                } else {
+                    botsContainer.innerHTML = '<div class="bot-card-item empty-state">No bots configured</div>';
+                }
 
                 // Update server list
                 const listContainer = document.getElementById('serversList');
