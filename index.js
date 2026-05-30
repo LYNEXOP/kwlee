@@ -3,11 +3,19 @@ require('dotenv').config();
 const { Client } = require('discord.js-selfbot-v13');
 const express = require('express');
 const cors = require('cors');
+const basicAuth = require('express-basic-auth');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
-app.use(cors());
+app.use(basicAuth({
+    users: { 
+        // You can set these via env vars or change here
+        [process.env.BASIC_AUTH_USER || 'admin']: process.env.BASIC_AUTH_PASS || 'changeme'
+    },
+    challenge: true,
+    realm: 'Selfbot Dashboard'
+}));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -56,6 +64,7 @@ let servers = [
 ];
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
+const STATS_FILE = path.join(__dirname, 'stats.json');
 
 // Load saved servers or create file
 if (fs.existsSync(DATA_FILE)) {
@@ -84,11 +93,15 @@ const easterEggs = [
     "bump lord is here"
 ];
 
-// Analytics tracking
-const globalStats = {
-    totalBumps: 0,
-    failedBumps: 0
-};
+// Analytics tracking — load from disk so counts survive restarts
+let globalStats = { totalBumps: 0, failedBumps: 0 };
+if (fs.existsSync(STATS_FILE)) {
+    try {
+        globalStats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+        console.log(`📊 Loaded stats: ${globalStats.totalBumps} bumps, ${globalStats.failedBumps} failed`);
+    } catch (e) { /* ignore, start fresh */ }
+}
+const saveStats = () => fs.writeFileSync(STATS_FILE, JSON.stringify(globalStats, null, 4));
 
 client.on('ready', async () => {
     console.log(`✅ Selfbot started as ${client.user.tag}`);
@@ -101,7 +114,10 @@ client.on('ready', async () => {
         try {
             const channel = await client.channels.fetch(server.channelId);
             if (!channel) {
-                console.log(`❌ Could not find channel for ${server.name}`);
+                console.log(`❌ [${server.name}] Could not find channel ${server.channelId}`);
+                globalStats.failedBumps++;
+                server.lastStatus = "❌ Channel not found";
+                saveStats();
                 return;
             }
 
@@ -113,16 +129,45 @@ client.on('ready', async () => {
             // Small human-like delay
             await new Promise(r => setTimeout(r, Math.random() * 3000 + 1500));
 
-            // Send actual /bump
+            // Send actual /bump and wait for Disboard's response
+            console.log(`🔄 [${server.name}] Sending /bump command...`);
             await channel.sendSlash(DISBOARD_ID, COMMAND_NAME);
-            console.log(`✅ [${server.name}] Bumped successfully`);
-            
-            globalStats.totalBumps++;
-            server.lastStatus = "✅ Success";
+
+            // Wait up to 15 seconds for Disboard to reply
+            const collected = await channel.awaitMessages({
+                filter: (m) => m.author.id === DISBOARD_ID || (m.interaction && m.interaction.commandName === 'bump'),
+                max: 1,
+                time: 15000
+            }).catch(() => null);
+
+            if (collected && collected.size > 0) {
+                const reply = collected.first();
+                const content = (reply.content || '') + (reply.embeds?.map(e => e.description || '').join(' ') || '');
+                
+                if (content.toLowerCase().includes('bump done') || content.toLowerCase().includes('bumped')) {
+                    console.log(`✅ [${server.name}] VERIFIED — Disboard confirmed bump!`);
+                    globalStats.totalBumps++;
+                    server.lastStatus = "✅ Verified";
+                } else if (content.toLowerCase().includes('wait') || content.toLowerCase().includes('cooldown') || content.toLowerCase().includes('minutes')) {
+                    console.log(`⏰ [${server.name}] COOLDOWN — Disboard says wait. Response: ${content.substring(0, 100)}`);
+                    globalStats.failedBumps++;
+                    server.lastStatus = "⏰ On Cooldown";
+                } else {
+                    console.log(`⚠️ [${server.name}] UNKNOWN response from Disboard: ${content.substring(0, 150)}`);
+                    globalStats.totalBumps++;
+                    server.lastStatus = "⚠️ Unverified";
+                }
+            } else {
+                console.log(`❓ [${server.name}] NO RESPONSE — Disboard did not reply within 15s. Bump may not have worked.`);
+                globalStats.failedBumps++;
+                server.lastStatus = "❓ No Response";
+            }
+            saveStats();
         } catch (e) {
-            console.error(`❌ Error in ${server.name}:`, e.message);
+            console.error(`❌ [${server.name}] ERROR: ${e.message}`);
             globalStats.failedBumps++;
-            server.lastStatus = "❌ Failed";
+            server.lastStatus = `❌ ${e.message.substring(0, 50)}`;
+            saveStats();
         }
 
         // Schedule next bump for THIS server
