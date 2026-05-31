@@ -105,19 +105,30 @@ const botPool = tokens.map((token, index) => ({
 // ─────────────────────────────────────────────
 // Core bump logic:
 // Try bots in order (Bot 1 → Bot 2 → Bot 3 …).
-// If Disboard says "cooldown" for a bot, mark that
-// bot as tried and immediately try the next one.
-// Only reschedule the server once all bots are tried
-// or a bot succeeds.
+// If a server has an assignedBotId, ONLY that bot is used.
+// If it has no assignedBotId, it uses any bot in the "Shared Pool"
+// (which are bots not assigned to ANY server).
 // ─────────────────────────────────────────────
 
-const bumpServer = async (server, triedBotIds = []) => {
-    // Pick next untried ready bot (in order by id)
-    const bot = botPool.find(b => b.ready && !triedBotIds.includes(b.id));
+const bumpServer = async (server, triedBotIds = [], isFirstAttempt = true) => {
+    let bot;
+
+    if (server.assignedBotId) {
+        // Dedicated bot
+        bot = botPool.find(b => b.id === server.assignedBotId && b.ready);
+        if (triedBotIds.includes(server.assignedBotId)) {
+            bot = null; // already tried this dedicated bot
+        }
+    } else {
+        // Shared pool (bots that are not assigned to any server)
+        const assignedBots = servers.map(s => s.assignedBotId).filter(id => id != null);
+        bot = botPool.find(b => b.ready && !triedBotIds.includes(b.id) && !assignedBots.includes(b.id));
+    }
 
     if (!bot) {
-        // All bots have been tried for this server
-        console.log(`❌ [${server.name}] All ${botPool.filter(b=>b.ready).length} bot(s) are on cooldown or failed. Scheduling next attempt in 2h.`);
+        // All eligible bots have been tried
+        let msg = server.assignedBotId ? "Dedicated bot is on cooldown or offline." : `All available shared bots (${botPool.filter(b=>b.ready).length} online) are on cooldown.`;
+        console.log(`❌ [${server.name}] ${msg} Scheduling next attempt in 2h.`);
         server.lastStatus = "❌ All bots on cooldown";
         scheduleNextBump(server);
         return;
@@ -135,12 +146,17 @@ const bumpServer = async (server, triedBotIds = []) => {
             return setTimeout(() => bumpServer(server, triedBotIds), 1500);
         }
 
-        // Send easter egg message first
-        const randomMsg = easterEggs[Math.floor(Math.random() * easterEggs.length)];
-        await channel.send(randomMsg).catch(() => null);
+        if (isFirstAttempt) {
+            // Send easter egg message first
+            const randomMsg = easterEggs[Math.floor(Math.random() * easterEggs.length)];
+            await channel.send(randomMsg).catch(() => null);
 
-        // Short human-like delay
-        await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000));
+            // Wait exactly 6 seconds before bumping
+            await new Promise(r => setTimeout(r, 6000));
+        } else {
+            // Short silent delay when switching bots
+            await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000));
+        }
 
         // Send /bump slash command
         console.log(`🔄 [${server.name}] Bot ${bot.id} sending /bump…`);
@@ -164,6 +180,8 @@ const bumpServer = async (server, triedBotIds = []) => {
             if (successWords.some(w => lower.includes(w))) {
                 // ✅ SUCCESS
                 console.log(`✅ [${server.name}] Bot ${bot.id} BUMPED successfully!`);
+                await channel.send("low cortisol 😊").catch(() => null);
+                
                 globalStats.totalBumps++;
                 server.lastStatus = `✅ Bumped by Bot ${bot.id}`;
                 bot.lastBumpTime = Date.now();
@@ -175,12 +193,14 @@ const bumpServer = async (server, triedBotIds = []) => {
                 const matchMins = content.match(/(\d+)\s*(?:minute|minuten|minutos|minut|min\.|min|dakika|分钟|分)/i);
                 const minsLeft = matchMins ? parseInt(matchMins[1], 10) : '?';
                 console.log(`⏰ [${server.name}] Bot ${bot.id} is on cooldown (${minsLeft}m). Trying next bot…`);
+                await channel.send("im on cooldown high cortisol 😩").catch(() => null);
+
                 server.lastStatus = `⏰ Bot ${bot.id} on cooldown, trying next…`;
                 globalStats.failedBumps++;
                 saveStats();
                 triedBotIds.push(bot.id);
-                // Small gap then try next bot immediately
-                setTimeout(() => bumpServer(server, triedBotIds), 1500);
+                // Small gap then try next bot immediately (silently)
+                setTimeout(() => bumpServer(server, triedBotIds, false), 1500);
 
             } else {
                 // Unknown response — assume success to avoid infinite loops
@@ -241,7 +261,7 @@ const startManagerOnce = () => {
 // ─── API Routes ───────────────────────────────
 
 app.post('/api/add-server', async (req, res) => {
-    const { channelId, inviteLink, serverName } = req.body;
+    const { channelId, inviteLink, serverName, assignedBotId } = req.body;
     if (!channelId) return res.status(400).json({ error: "Missing channelId" });
 
     try {
@@ -279,7 +299,10 @@ app.post('/api/add-server', async (req, res) => {
         if (servers.find(s => s.channelId === channelId)) {
             return res.status(400).json({ error: "This channel is already being bumped." });
         }
-        const newServer = { name, channelId, lastStatus: "⏳ Starting…" };
+        
+        const parsedBotId = assignedBotId ? parseInt(assignedBotId, 10) : null;
+        const newServer = { name, channelId, assignedBotId: parsedBotId, lastStatus: "⏳ Starting…" };
+        
         servers.push(newServer);
         fs.writeFileSync(DATA_FILE, JSON.stringify(servers, null, 4));
         bumpServer(newServer);
@@ -295,6 +318,7 @@ app.get('/api/stats', (req, res) => {
         .map(s => ({
             name: s.name,
             channelId: s.channelId,
+            assignedBotId: s.assignedBotId || null,
             lastStatus: s.lastStatus || "⏳ Waiting…",
             nextBumpTime: s.nextBumpTime || null
         }));

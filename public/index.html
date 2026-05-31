@@ -129,6 +129,13 @@
                         <input type="text" id="channelId" placeholder="123456789012345678" required>
                         <div class="input-hint">Right-click the bump channel in Discord → Copy Channel ID. Make sure the bot accounts are already in that server.</div>
                     </div>
+                    <div class="form-group">
+                        <label for="assignedBotId">Assign Bot <span class="optional">(optional)</span></label>
+                        <select id="assignedBotId">
+                            <option value="">Shared Pool (All unassigned bots help each other)</option>
+                        </select>
+                        <div class="input-hint">Choose a specific bot to dedicate to this server, or use the Shared Pool.</div>
+                    </div>
                     <button type="submit" class="btn btn-primary full-width" id="submitBtn">
                         <span class="btn-text">⚡ Start Bumping</span>
                         <span class="loader hidden"></span>
@@ -228,12 +235,14 @@ const fetchStats = async () => {
             sl.innerHTML = `
                 <div class="table-head">
                     <span>Server</span>
+                    <span>Assigned To</span>
                     <span>Status</span>
                     <span>Next Bump</span>
                     <span>Actions</span>
                 </div>
             `;
             data.servers.forEach(server => {
+                const assignedText = server.assignedBotId ? `Bot #${server.assignedBotId}` : 'Shared Pool';
                 const row = document.createElement('div');
                 row.className = 'table-row';
                 row.innerHTML = `
@@ -244,6 +253,7 @@ const fetchStats = async () => {
                             <div class="row-sub">${server.channelId}</div>
                         </div>
                     </div>
+                    <div class="row-sub">${assignedText}</div>
                     <div><span class="tag ${statusClass(server.lastStatus)}">${server.lastStatus || '⏳ Waiting…'}</span></div>
                     <div class="row-time">${formatCountdown(server.nextBumpTime)}</div>
                     <div class="row-actions">
@@ -275,6 +285,11 @@ const fetchStats = async () => {
             bl.innerHTML = `<div class="empty-state"><div class="empty-icon">🤖</div><div>No bots found in your .env</div></div>`;
         } else {
             bl.innerHTML = '';
+            // Also update the dropdown for assigning bots
+            const assignSelect = document.getElementById('assignedBotId');
+            const currentSelection = assignSelect.value;
+            assignSelect.innerHTML = '<option value="">Shared Pool (All unassigned bots help each other)</option>';
+
             data.bots.forEach(bot => {
                 let badge, badgeClass, detail;
                 if (bot.ready) {
@@ -284,6 +299,13 @@ const fetchStats = async () => {
                         ? new Date(bot.lastBumpTime).toLocaleTimeString()
                         : 'Never';
                     detail = `Last bump: ${lastBump}`;
+                    
+                    // Add to dropdown
+                    const opt = document.createElement('option');
+                    opt.value = bot.id;
+                    opt.textContent = `Bot #${bot.id} (${bot.tag})`;
+                    if (currentSelection === String(bot.id)) opt.selected = true;
+                    assignSelect.appendChild(opt);
                 } else if (bot.error) {
                     badge = '● Error';
                     badgeClass = 'badge-error';
@@ -323,6 +345,7 @@ document.getElementById('addServerForm').addEventListener('submit', async e => {
     const loader = btn.querySelector('.loader');
     const statusMsg = document.getElementById('statusMessage');
     const channelId = document.getElementById('channelId').value;
+    const assignedBotId = document.getElementById('assignedBotId').value;
 
     btn.disabled = true;
     btnText.classList.add('hidden');
@@ -333,7 +356,7 @@ document.getElementById('addServerForm').addEventListener('submit', async e => {
         const res = await fetch('/api/add-server', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ channelId })
+            body: JSON.stringify({ channelId, assignedBotId })
         });
         const data = await res.json();
         if (res.ok) {
