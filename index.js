@@ -159,7 +159,7 @@ const bumpServer = async (server, triedBotIds = []) => {
             const lower = content.toLowerCase();
 
             const successWords = ['bump done', 'bumped', 'erfolgreich', 'sucesso', 'éxito', 'succès', 'succes', 'başarılı', 'sukces', 'успешно', '成功'];
-            const cooldownWords = ['wait', 'cooldown', 'minute', 'minuten', 'minutos', 'dakika', 'minut', 'warte', '分钟', '分'];
+            const cooldownWords = ['wait', 'cooldown', 'minute', 'minuten', 'minutos', 'dakika', 'minut', 'warte', 'poczekaj', '分钟', '分', 'min.', 'min '];
 
             if (successWords.some(w => lower.includes(w))) {
                 // ✅ SUCCESS
@@ -172,7 +172,7 @@ const bumpServer = async (server, triedBotIds = []) => {
 
             } else if (cooldownWords.some(w => lower.includes(w))) {
                 // ⏰ This bot is on Disboard per-user cooldown → try next bot
-                const matchMins = content.match(/(\d+)\s*(?:minute|minuten|minutos|minut|dakika|分钟|分)/i);
+                const matchMins = content.match(/(\d+)\s*(?:minute|minuten|minutos|minut|min\.|min|dakika|分钟|分)/i);
                 const minsLeft = matchMins ? parseInt(matchMins[1], 10) : '?';
                 console.log(`⏰ [${server.name}] Bot ${bot.id} is on cooldown (${minsLeft}m). Trying next bot…`);
                 server.lastStatus = `⏰ Bot ${bot.id} on cooldown, trying next…`;
