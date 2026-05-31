@@ -225,38 +225,49 @@ const startManagerOnce = () => {
 // ─── API Routes ───────────────────────────────
 
 app.post('/api/add-server', async (req, res) => {
-    const { inviteLink, channelId, serverName } = req.body;
+    const { channelId, inviteLink, serverName } = req.body;
     if (!channelId) return res.status(400).json({ error: "Missing channelId" });
 
     try {
         let guildName = serverName || '';
 
         if (inviteLink) {
+            // Join via invite if provided
             const match = inviteLink.match(/(?:discord\.gg\/|discord\.com\/invite\/)(.+)/i);
             const inviteCode = (match && match[1]) ? match[1] : inviteLink;
-
             const activeBots = botPool.filter(b => b.ready);
             if (activeBots.length === 0) return res.status(500).json({ error: "No bots are online." });
-
             const results = await Promise.all(activeBots.map(async bot => {
                 try {
                     const guild = await bot.client.acceptInvite(inviteCode);
                     if (!guildName) guildName = guild.name;
                     return { success: true };
-                } catch (e) {
-                    return { success: false };
-                }
+                } catch (e) { return { success: false }; }
             }));
-
             if (!results.some(r => r.success)) throw new Error("All bots failed to join.");
+        } else {
+            // No invite — bots should already be in the server.
+            // Try to auto-detect the guild name from the channel.
+            if (!guildName) {
+                for (const bot of botPool.filter(b => b.ready)) {
+                    try {
+                        const ch = await bot.client.channels.fetch(channelId);
+                        if (ch && ch.guild) { guildName = ch.guild.name; break; }
+                    } catch (e) { /* try next bot */ }
+                }
+            }
         }
 
         const name = guildName || `Server (${channelId})`;
+        // Avoid duplicates
+        if (servers.find(s => s.channelId === channelId)) {
+            return res.status(400).json({ error: "This channel is already being bumped." });
+        }
         const newServer = { name, channelId, lastStatus: "⏳ Starting…" };
         servers.push(newServer);
         fs.writeFileSync(DATA_FILE, JSON.stringify(servers, null, 4));
         bumpServer(newServer);
-        res.json({ success: true, message: `Added ${name} and starting bumps!` });
+        res.json({ success: true, message: `Added "${name}" and starting bumps!` });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
