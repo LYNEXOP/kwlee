@@ -3,268 +3,393 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Selfbot Control Panel</title>
+    <title>KwLee — Bump Control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="background-orb orb-1"></div>
-    <div class="background-orb orb-2"></div>
-    
-    <div class="container glass-panel">
-        <header>
-            <h1>Selfbot Control</h1>
-            <p>Deploy your bumper to a new server instantly</p>
-        </header>
 
-        <form id="addServerForm">
-            <div class="input-group">
-                <label for="inviteLink">Server Invite Link</label>
-                <input type="text" id="inviteLink" name="inviteLink" placeholder="https://discord.gg/yourlink" required>
-            </div>
-            
-            <div class="input-group">
-                <label for="channelId">Target Channel ID</label>
-                <input type="text" id="channelId" name="channelId" placeholder="123456789012345678" required>
-            </div>
+<!-- Ambient background -->
+<div class="ambient">
+    <div class="orb orb-blue"></div>
+    <div class="orb orb-purple"></div>
+    <div class="orb orb-red"></div>
+</div>
 
-            <button type="submit" id="submitBtn">
-                <span class="btn-text">Join & Start Bumping</span>
-                <span class="loader hidden"></span>
-            </button>
-        </form>
+<div class="layout">
 
-        <div id="statusMessage" class="status hidden"></div>
-
-        <div class="divider"></div>
-
-        <header class="dashboard-header">
-            <h2>Live Analytics</h2>
-            <button id="refreshBtn" class="icon-btn" title="Refresh Dashboard">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            </button>
-        </header>
-
-        <div class="metrics-grid">
-            <div class="metric-card success-card">
-                <div class="metric-value" id="totalBumpsVal">0</div>
-                <div class="metric-label">Successful Bumps</div>
-            </div>
-            <div class="metric-card error-card">
-                <div class="metric-value" id="failedBumpsVal">0</div>
-                <div class="metric-label">Failed Bumps</div>
+    <!-- ══ SIDEBAR ══ -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-icon">⚡</div>
+            <div>
+                <div class="brand-name">KwLee</div>
+                <div class="brand-sub">Bump Controller</div>
             </div>
         </div>
 
-        <div class="divider"></div>
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-tab="dashboard">
+                <span class="nav-icon">📊</span>
+                <span>Dashboard</span>
+            </a>
+            <a href="#" class="nav-item" data-tab="add">
+                <span class="nav-icon">➕</span>
+                <span>Add Server</span>
+            </a>
+            <a href="#" class="nav-item" data-tab="bots">
+                <span class="nav-icon">🤖</span>
+                <span>Bot Accounts</span>
+            </a>
+        </nav>
 
-        <header class="dashboard-header">
-            <h2>Bot Accounts Status</h2>
-        </header>
-
-        <div class="bots-grid" id="botsList">
-            <!-- Bot statuses will be injected here -->
-            <div class="bot-card">Loading bot accounts...</div>
+        <div class="sidebar-footer">
+            <div class="connection-dot" id="connDot"></div>
+            <span id="connLabel">Connecting…</span>
         </div>
+    </aside>
 
-        <div class="divider"></div>
+    <!-- ══ MAIN CONTENT ══ -->
+    <main class="main">
 
-        <div class="servers-list" id="serversList">
-            <!-- Server items will be injected here -->
-            <div class="server-item empty-state">Loading servers...</div>
-        </div>
-    </div>
+        <!-- ── DASHBOARD TAB ── -->
+        <section class="tab active" id="tab-dashboard">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Dashboard</h1>
+                    <p class="page-sub">Live status of all bumping servers</p>
+                </div>
+                <button class="btn btn-ghost" id="refreshBtn">
+                    <svg id="refreshIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    Refresh
+                </button>
+            </div>
 
-    <script>
-        document.getElementById('addServerForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const btn = document.getElementById('submitBtn');
-            const btnText = btn.querySelector('.btn-text');
-            const loader = btn.querySelector('.loader');
-            const statusMsg = document.getElementById('statusMessage');
+            <!-- Stats cards -->
+            <div class="stats-row">
+                <div class="stat-card">
+                    <div class="stat-icon green">✅</div>
+                    <div class="stat-info">
+                        <div class="stat-value" id="totalBumpsVal">—</div>
+                        <div class="stat-label">Successful Bumps</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon red">❌</div>
+                    <div class="stat-info">
+                        <div class="stat-value" id="failedBumpsVal">—</div>
+                        <div class="stat-label">Failed Attempts</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon blue">🖥️</div>
+                    <div class="stat-info">
+                        <div class="stat-value" id="serversVal">—</div>
+                        <div class="stat-label">Active Servers</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon purple">🤖</div>
+                    <div class="stat-info">
+                        <div class="stat-value" id="botsOnlineVal">—</div>
+                        <div class="stat-label">Bots Online</div>
+                    </div>
+                </div>
+            </div>
 
-            const inviteLink = document.getElementById('inviteLink').value;
-            const channelId = document.getElementById('channelId').value;
+            <!-- Servers table -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Bumping Servers</span>
+                    <div class="pulse-dot"></div>
+                </div>
+                <div id="serversList" class="servers-table">
+                    <div class="empty-state">
+                        <div class="empty-icon">🖥️</div>
+                        <div>Loading servers…</div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-            // UI Loading state
-            btn.disabled = true;
-            btnText.classList.add('hidden');
-            loader.classList.remove('hidden');
-            statusMsg.className = 'status hidden';
+        <!-- ── ADD SERVER TAB ── -->
+        <section class="tab" id="tab-add">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Add Server</h1>
+                    <p class="page-sub">Deploy the bumper to a new Discord server</p>
+                </div>
+            </div>
 
-            try {
-                const response = await fetch('/api/add-server', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ inviteLink, channelId })
-                });
+            <div class="card form-card">
+                <form id="addServerForm">
+                    <div class="form-group">
+                        <label for="inviteLink">Server Invite Link <span class="optional">(optional)</span></label>
+                        <input type="text" id="inviteLink" placeholder="https://discord.gg/yourlink">
+                        <div class="input-hint">Leave blank if the bot accounts are already in the server.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="channelId">Bump Channel ID <span class="required">*</span></label>
+                        <input type="text" id="channelId" placeholder="123456789012345678" required>
+                        <div class="input-hint">Right-click the channel in Discord → Copy Channel ID</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="serverName">Server Name <span class="optional">(optional)</span></label>
+                        <input type="text" id="serverName" placeholder="My Server">
+                    </div>
+                    <button type="submit" class="btn btn-primary full-width" id="submitBtn">
+                        <span class="btn-text">⚡ Start Bumping</span>
+                        <span class="loader hidden"></span>
+                    </button>
+                </form>
+                <div id="statusMessage" class="status-msg hidden"></div>
+            </div>
 
-                const data = await response.json();
+            <div class="card info-card">
+                <div class="info-title">📋 How Bot Chain Works</div>
+                <div class="info-steps">
+                    <div class="info-step"><span class="step-num">1</span> Bot 1 tries to bump the server</div>
+                    <div class="info-step"><span class="step-num">2</span> If Disboard says "cooldown" → Bot 2 tries next</div>
+                    <div class="info-step"><span class="step-num">3</span> If Bot 2 also fails → Bot 3 tries</div>
+                    <div class="info-step"><span class="step-num">4</span> If all bots fail → waits 2h then tries again</div>
+                </div>
+            </div>
+        </section>
 
-                if (response.ok) {
-                    statusMsg.textContent = data.message;
-                    statusMsg.className = 'status success visible';
-                    document.getElementById('addServerForm').reset();
-                } else {
-                    statusMsg.textContent = data.error || 'An error occurred';
-                    statusMsg.className = 'status error visible';
-                }
-            } catch (err) {
-                statusMsg.textContent = 'Failed to connect to the server.';
-                statusMsg.className = 'status error visible';
-            } finally {
-                // UI Reset state
-                btn.disabled = false;
-                btnText.classList.remove('hidden');
-                loader.classList.add('hidden');
-                // Refresh dashboard after adding
-                fetchStats();
-            }
-        });
+        <!-- ── BOTS TAB ── -->
+        <section class="tab" id="tab-bots">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Bot Accounts</h1>
+                    <p class="page-sub">Status of all logged-in Discord accounts</p>
+                </div>
+            </div>
 
-        // Dashboard Logic
-        const formatCountdown = (targetTime) => {
-            if (!targetTime) return "Unknown";
-            const diff = targetTime - Date.now();
-            if (diff <= 0) return "Any moment now...";
-            const mins = Math.floor(diff / 60000);
-            return `in ${mins} min${mins !== 1 ? 's' : ''}`;
-        };
+            <div id="botsList" class="bots-grid">
+                <div class="empty-state">
+                    <div class="empty-icon">🤖</div>
+                    <div>Loading bots…</div>
+                </div>
+            </div>
+        </section>
 
-        const fetchStats = async () => {
-            const refreshBtn = document.getElementById('refreshBtn');
-            refreshBtn.classList.add('spinning');
+    </main>
+</div>
 
-            try {
-                const res = await fetch('/api/stats');
-                const data = await res.json();
-                
-                // Update global metrics
-                document.getElementById('totalBumpsVal').textContent = data.global.totalBumps;
-                document.getElementById('failedBumpsVal').textContent = data.global.failedBumps;
+<script>
+// ─── Tab Navigation ───────────────────────────
+document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', e => {
+        e.preventDefault();
+        const tab = item.dataset.tab;
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        item.classList.add('active');
+        document.getElementById('tab-' + tab).classList.add('active');
+    });
+});
 
-                // Update bots list
-                const botsContainer = document.getElementById('botsList');
-                botsContainer.innerHTML = '';
-                
-                if (data.bots && data.bots.length > 0) {
-                    data.bots.forEach(bot => {
-                        const div = document.createElement('div');
-                        div.className = 'bot-card-item';
-                        
-                        let statusText = 'Offline';
-                        let statusClass = 'status-waiting';
-                        
-                        if (bot.ready) {
-                            if (bot.error) {
-                                statusText = `Error: ${bot.error}`;
-                                statusClass = 'status-error';
-                            } else if (Date.now() < bot.cooldownUntil) {
-                                const diff = bot.cooldownUntil - Date.now();
-                                const mins = Math.ceil(diff / 60000);
-                                statusText = `On Cooldown (${mins}m remaining)`;
-                                statusClass = 'status-waiting';
-                            } else {
-                                statusText = 'Ready & Idle';
-                                statusClass = 'status-success';
-                            }
-                        } else if (bot.error) {
-                            statusText = `Failed: ${bot.error}`;
-                            statusClass = 'status-error';
+// ─── Utility ─────────────────────────────────
+const formatCountdown = t => {
+    if (!t) return "—";
+    const diff = t - Date.now();
+    if (diff <= 0) return "Any moment…";
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    if (h > 0) return `in ${h}h ${m}m`;
+    return `in ${m}m`;
+};
+
+const statusClass = status => {
+    if (!status) return 'tag-waiting';
+    const s = status.toLowerCase();
+    if (s.includes('✅') || s.includes('bumped') || s.includes('verified')) return 'tag-success';
+    if (s.includes('❌') || s.includes('error') || s.includes('fail') || s.includes('cancel')) return 'tag-error';
+    if (s.includes('⏰') || s.includes('cooldown')) return 'tag-warn';
+    return 'tag-waiting';
+};
+
+// ─── Fetch & Render ───────────────────────────
+const fetchStats = async () => {
+    document.getElementById('refreshIcon').classList.add('spinning');
+    try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) throw new Error('not ok');
+        const data = await res.json();
+
+        // Connection indicator
+        document.getElementById('connDot').className = 'connection-dot online';
+        document.getElementById('connLabel').textContent = 'Connected';
+
+        // Stat cards
+        document.getElementById('totalBumpsVal').textContent = data.global.totalBumps;
+        document.getElementById('failedBumpsVal').textContent = data.global.failedBumps;
+        document.getElementById('serversVal').textContent = data.servers.length;
+        const onlineBots = data.bots.filter(b => b.ready).length;
+        document.getElementById('botsOnlineVal').textContent = `${onlineBots}/${data.bots.length}`;
+
+        // Servers table
+        const sl = document.getElementById('serversList');
+        if (data.servers.length === 0) {
+            sl.innerHTML = `<div class="empty-state"><div class="empty-icon">🖥️</div><div>No servers added yet. Go to <strong>Add Server</strong> to get started.</div></div>`;
+        } else {
+            sl.innerHTML = `
+                <div class="table-head">
+                    <span>Server</span>
+                    <span>Status</span>
+                    <span>Next Bump</span>
+                    <span>Actions</span>
+                </div>
+            `;
+            data.servers.forEach(server => {
+                const isCancelled = server.lastStatus && server.lastStatus.includes('Cancelled');
+                const row = document.createElement('div');
+                row.className = 'table-row';
+                row.innerHTML = `
+                    <div class="row-name">
+                        <div class="server-avatar">${server.name.charAt(0).toUpperCase()}</div>
+                        <div>
+                            <div class="row-title">${server.name}</div>
+                            <div class="row-sub">${server.channelId}</div>
+                        </div>
+                    </div>
+                    <div><span class="tag ${statusClass(server.lastStatus)}">${server.lastStatus || '⏳ Waiting…'}</span></div>
+                    <div class="row-time">${isCancelled ? '—' : formatCountdown(server.nextBumpTime)}</div>
+                    <div class="row-actions">
+                        ${!isCancelled
+                            ? `<button class="btn btn-danger-sm stop-btn" data-channel="${server.channelId}">⏹ Stop</button>`
+                            : `<span class="muted-text">Stopped</span>`
                         }
-                        
-                        div.innerHTML = `
-                            <div class="bot-card-info">
-                                <div class="bot-card-tag">${bot.tag || `Bot #${bot.id}`}</div>
-                                <div class="bot-card-status ${statusClass}">${statusText}</div>
-                            </div>
-                        `;
-                        botsContainer.appendChild(div);
+                        <button class="btn btn-ghost-sm remove-btn" data-channel="${server.channelId}">🗑</button>
+                    </div>
+                `;
+                sl.appendChild(row);
+            });
+
+            // Cancel (stop) buttons
+            sl.querySelectorAll('.stop-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    btn.disabled = true;
+                    btn.textContent = '…';
+                    const r = await fetch('/api/cancel-server', {
+                        method: 'POST',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({channelId: btn.dataset.channel})
                     });
+                    if (r.ok) fetchStats();
+                    else { btn.disabled = false; btn.textContent = '⏹ Stop'; }
+                });
+            });
+
+            // Remove buttons
+            sl.querySelectorAll('.remove-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    if (!confirm('Remove this server from bumping?')) return;
+                    await fetch('/api/remove-server', {
+                        method: 'DELETE',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({channelId: btn.dataset.channel})
+                    });
+                    fetchStats();
+                });
+            });
+        }
+
+        // Bots grid
+        const bl = document.getElementById('botsList');
+        if (!data.bots || data.bots.length === 0) {
+            bl.innerHTML = `<div class="empty-state"><div class="empty-icon">🤖</div><div>No bots found in your .env</div></div>`;
+        } else {
+            bl.innerHTML = '';
+            data.bots.forEach(bot => {
+                let badge, badgeClass, detail;
+                if (bot.ready) {
+                    badge = '● Online';
+                    badgeClass = 'badge-online';
+                    const lastBump = bot.lastBumpTime
+                        ? new Date(bot.lastBumpTime).toLocaleTimeString()
+                        : 'Never';
+                    detail = `Last bump: ${lastBump}`;
+                } else if (bot.error) {
+                    badge = '● Error';
+                    badgeClass = 'badge-error';
+                    detail = bot.error.substring(0, 60);
                 } else {
-                    botsContainer.innerHTML = '<div class="bot-card-item empty-state">No bots configured</div>';
+                    badge = '● Connecting';
+                    badgeClass = 'badge-waiting';
+                    detail = 'Waiting for login…';
                 }
 
-                // Update server list
-                const listContainer = document.getElementById('serversList');
-                listContainer.innerHTML = '';
+                const card = document.createElement('div');
+                card.className = 'bot-card';
+                card.innerHTML = `
+                    <div class="bot-avatar">🤖</div>
+                    <div class="bot-info">
+                        <div class="bot-tag">${bot.tag || 'Bot #' + bot.id}</div>
+                        <div class="bot-detail">${detail}</div>
+                    </div>
+                    <div class="badge ${badgeClass}">${badge}</div>
+                `;
+                bl.appendChild(card);
+            });
+        }
 
-                if (data.servers.length === 0) {
-                    listContainer.innerHTML = '<div class="server-item empty-state">No servers active</div>';
-                } else {
-                    data.servers.forEach(server => {
-                        const div = document.createElement('div');
-                        div.className = 'server-item';
-                        
-                        let statusClass = 'status-waiting';
-                        if (server.lastStatus.includes('Success')) statusClass = 'status-success';
-                        if (server.lastStatus.includes('Failed') || server.lastStatus.includes('Cancelled')) statusClass = 'status-error';
+    } catch(e) {
+        document.getElementById('connDot').className = 'connection-dot offline';
+        document.getElementById('connLabel').textContent = 'Disconnected';
+    }
+    setTimeout(() => document.getElementById('refreshIcon').classList.remove('spinning'), 500);
+};
 
-                        const isCancelled = server.lastStatus.includes('Cancelled');
+// ─── Add Server Form ──────────────────────────
+document.getElementById('addServerForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    const btnText = btn.querySelector('.btn-text');
+    const loader = btn.querySelector('.loader');
+    const statusMsg = document.getElementById('statusMessage');
 
-                        div.innerHTML = `
-                            <div class="server-info">
-                                <div class="server-name">${server.name}</div>
-                                <div class="server-status ${statusClass}">${server.lastStatus}</div>
-                            </div>
-                            <div class="server-actions">
-                                <div class="server-time">
-                                    <div class="time-label">Next Bump</div>
-                                    <div class="time-value">${isCancelled ? '—' : formatCountdown(server.nextBumpTime)}</div>
-                                </div>
-                                <button class="cancel-btn ${isCancelled ? 'cancelled' : ''}" 
-                                    data-channel="${server.channelId}" 
-                                    ${isCancelled ? 'disabled' : ''}>
-                                    ${isCancelled ? 'Cancelled' : '⏹ Stop'}
-                                </button>
-                            </div>
-                        `;
-                        listContainer.appendChild(div);
-                    });
+    btn.disabled = true;
+    btnText.classList.add('hidden');
+    loader.classList.remove('hidden');
+    statusMsg.className = 'status-msg hidden';
 
-                    // Attach cancel button listeners
-                    listContainer.querySelectorAll('.cancel-btn:not([disabled])').forEach(btn => {
-                        btn.addEventListener('click', async () => {
-                            const channelId = btn.dataset.channel;
-                            btn.disabled = true;
-                            btn.textContent = '...';
-                            try {
-                                const res = await fetch('/api/cancel-server', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ channelId })
-                                });
-                                if (res.ok) {
-                                    btn.textContent = 'Cancelled';
-                                    btn.classList.add('cancelled');
-                                    // Update the status text next to it
-                                    const item = btn.closest('.server-item');
-                                    item.querySelector('.server-status').textContent = '❌ Cancelled';
-                                    item.querySelector('.server-status').className = 'server-status status-error';
-                                    item.querySelector('.time-value').textContent = '—';
-                                } else {
-                                    btn.disabled = false;
-                                    btn.textContent = '⏹ Stop';
-                                }
-                            } catch(e) {
-                                btn.disabled = false;
-                                btn.textContent = '⏹ Stop';
-                            }
-                        });
-                    });
-                }
-            } catch (e) {
-                console.error("Failed to fetch stats", e);
-            } finally {
-                setTimeout(() => refreshBtn.classList.remove('spinning'), 500);
-            }
-        };
+    try {
+        const res = await fetch('/api/add-server', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                inviteLink: document.getElementById('inviteLink').value,
+                channelId: document.getElementById('channelId').value,
+                serverName: document.getElementById('serverName').value
+            })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            statusMsg.textContent = '✅ ' + data.message;
+            statusMsg.className = 'status-msg success';
+            document.getElementById('addServerForm').reset();
+            fetchStats();
+        } else {
+            statusMsg.textContent = '❌ ' + (data.error || 'Failed');
+            statusMsg.className = 'status-msg error';
+        }
+    } catch {
+        statusMsg.textContent = '❌ Could not connect to server.';
+        statusMsg.className = 'status-msg error';
+    } finally {
+        btn.disabled = false;
+        btnText.classList.remove('hidden');
+        loader.classList.add('hidden');
+    }
+});
 
-        document.getElementById('refreshBtn').addEventListener('click', fetchStats);
+document.getElementById('refreshBtn').addEventListener('click', fetchStats);
 
-        // Initial fetch
-        fetchStats();
-    </script>
+// Auto-refresh every 15 seconds
+fetchStats();
+setInterval(fetchStats, 15000);
+</script>
 </body>
 </html>

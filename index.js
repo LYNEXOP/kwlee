@@ -2,14 +2,13 @@ require('dotenv').config();
 
 const { Client } = require('discord.js-selfbot-v13');
 const express = require('express');
-const cors = require('cors');
 const basicAuth = require('express-basic-auth');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
 app.use(basicAuth({
-    users: { 
+    users: {
         [process.env.BASIC_AUTH_USER || 'admin']: process.env.BASIC_AUTH_PASS || 'changeme'
     },
     challenge: true,
@@ -21,52 +20,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 const DISBOARD_ID = "302050872383242240";
 const COMMAND_NAME = "bump";
 
-// Channels where the bot will occasionally chat to look human
-const activityChannels = [
-    {
-        name: "General Chat 1",
-        channelId: "ACTIVITY_CHANNEL_ID_HERE"
-    }
-];
-
-const activityMessages = [
-    "hello",
-    "how is everyone doing?",
-    "what's up",
-    "anyone playing games later?",
-    "lol true",
-    "fr",
-    "same",
-    "bruh",
-    "im bored"
-];
-
 // Default servers configuration
-let servers = [
-    {
-        name: "Server 1",
-        channelId: "CHANNEL_ID_1_HERE"
-    },
-    {
-        name: "Server 2",
-        channelId: "CHANNEL_ID_2_HERE"
-    },
-    {
-        name: "Server 3",
-        channelId: "CHANNEL_ID_3_HERE"
-    }
-];
+let servers = [];
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
 const STATS_FILE = path.join(__dirname, 'stats.json');
 
-// Load saved servers or create file
+// Load saved servers
 if (fs.existsSync(DATA_FILE)) {
     try {
-        const rawData = fs.readFileSync(DATA_FILE, 'utf8');
-        servers = JSON.parse(rawData);
+        servers = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     } catch (e) {
-        console.error("❌ Failed to parse servers.json, using defaults.");
+        console.error("❌ Failed to parse servers.json.");
+        servers = [];
     }
 } else {
     fs.writeFileSync(DATA_FILE, JSON.stringify(servers, null, 4));
@@ -78,7 +44,6 @@ const easterEggs = [
     "stay away a fart bump is coming 💨",
     "mind ur own bumping",
     "fatbump incoming 🔥",
-    "kys bumpers",
     "bumpy bum the bumping bum",
     "brophet bumhoamad has arrived 🙏",
     "time for the holy bump",
@@ -86,125 +51,88 @@ const easterEggs = [
     "bump lord is here"
 ];
 
-// Analytics tracking — load from disk so counts survive restarts
+// Analytics — load from disk so counts survive restarts
 let globalStats = { totalBumps: 0, failedBumps: 0 };
 if (fs.existsSync(STATS_FILE)) {
     try {
         globalStats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
         console.log(`📊 Loaded stats: ${globalStats.totalBumps} bumps, ${globalStats.failedBumps} failed`);
-    } catch (e) { /* ignore, start fresh */ }
+    } catch (e) { /* ignore */ }
 }
 const saveStats = () => fs.writeFileSync(STATS_FILE, JSON.stringify(globalStats, null, 4));
 
-// Parse multiple tokens
-const tokensStr = process.env.TOKENS || process.env.TOKEN;
-const tokens = tokensStr ? tokensStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+// Parse multiple tokens from .env
+// Supports TOKENS=tok1,tok2,tok3  or  TOKEN=tok1
+const tokensStr = process.env.TOKENS || process.env.TOKEN || '';
+const tokens = tokensStr.split(',').map(t => t.trim()).filter(Boolean);
 
 if (tokens.length === 0) {
-    console.error("❌ No Discord tokens found in .env file (TOKEN or TOKENS).");
+    console.error("❌ No Discord tokens found. Add TOKEN or TOKENS to your .env file.");
     process.exit(1);
 }
 
-// Map to keep track of each server's bump timer so we can cancel it
+// Map to cancel scheduled bump timers
 const bumpTimers = new Map();
 
-// Initialize the bot pool
-const botPool = tokens.map((token, index) => {
-    return {
-        id: index + 1,
-        token: token,
-        client: new Client(),
-        ready: false,
-        tag: 'Offline',
-        lastBumpTime: 0,
-        cooldownUntil: 0,
-        error: null
-    };
-});
+// Initialize bot pool — NO cooldown field, bots are always eligible to try
+const botPool = tokens.map((token, index) => ({
+    id: index + 1,
+    token,
+    client: new Client(),
+    ready: false,
+    tag: `Bot #${index + 1}`,
+    lastBumpTime: 0,
+    status: 'connecting', // 'connecting' | 'online' | 'error'
+    error: null
+}));
 
-// Smart selection of next available bot
-const getAvailableBot = (excludedBotIds = []) => {
-    const now = Date.now();
-    const available = botPool.filter(bot => bot.ready && now >= bot.cooldownUntil && !excludedBotIds.includes(bot.id));
-    if (available.length === 0) return null;
-    
-    // Pick the bot that has the oldest lastBumpTime (i.e. least recently used)
-    available.sort((a, b) => a.lastBumpTime - b.lastBumpTime);
-    return available[0];
-};
+// ─────────────────────────────────────────────
+// Core bump logic:
+// Try bots in order (Bot 1 → Bot 2 → Bot 3 …).
+// If Disboard says "cooldown" for a bot, mark that
+// bot as tried and immediately try the next one.
+// Only reschedule the server once all bots are tried
+// or a bot succeeds.
+// ─────────────────────────────────────────────
 
-const scheduleNextBump = (server, customInterval = null) => {
-    let nextInterval;
-    if (customInterval !== null) {
-        nextInterval = customInterval;
-    } else {
-        const randomMinutes = Math.floor(Math.random() * 30) + 1;
-        nextInterval = (2 * 60 * 60 * 1000) + (randomMinutes * 60 * 1000);
-    }
+const bumpServer = async (server, triedBotIds = []) => {
+    // Pick next untried ready bot (in order by id)
+    const bot = botPool.find(b => b.ready && !triedBotIds.includes(b.id));
 
-    server.nextBumpTime = Date.now() + nextInterval;
-    console.log(`⏳ Next bump for ${server.name} in ${Math.round(nextInterval / 60000)} minutes`);
-    
-    if (bumpTimers.has(server.channelId)) {
-        clearTimeout(bumpTimers.get(server.channelId));
-    }
-
-    const timerId = setTimeout(() => bumpServer(server), nextInterval);
-    bumpTimers.set(server.channelId, timerId);
-};
-
-const bumpServer = async (server, excludedBotIds = []) => {
-    const bot = getAvailableBot(excludedBotIds);
     if (!bot) {
-        const readyBotsCount = botPool.filter(b => b.ready).length;
-        if (readyBotsCount > 0 && excludedBotIds.length >= readyBotsCount) {
-            console.log(`❌ [${server.name}] All online bots failed to bump. Scheduling next bump in 2 hours.`);
-            server.lastStatus = "❌ All bots failed";
-            scheduleNextBump(server);
-            return;
-        }
-
-        console.log(`⏳ [${server.name}] No available bot accounts. Retrying in 1 minute...`);
-        server.lastStatus = "⏳ Waiting for free bot";
-        server.nextBumpTime = Date.now() + 60000;
-        
-        if (bumpTimers.has(server.channelId)) {
-            clearTimeout(bumpTimers.get(server.channelId));
-        }
-        
-        const timerId = setTimeout(() => bumpServer(server), 60000);
-        bumpTimers.set(server.channelId, timerId);
+        // All bots have been tried for this server
+        console.log(`❌ [${server.name}] All ${botPool.filter(b=>b.ready).length} bot(s) are on cooldown or failed. Scheduling next attempt in 2h.`);
+        server.lastStatus = "❌ All bots on cooldown";
+        scheduleNextBump(server);
         return;
     }
 
-    const clientToUse = bot.client;
     const botShortTag = bot.tag.split('#')[0];
-    console.log(`🤖 [${server.name}] Selected bot ${bot.tag} for this bump.`);
+    console.log(`🤖 [${server.name}] Trying Bot ${bot.id} (${bot.tag})…`);
+    server.lastStatus = `🔄 Trying Bot ${bot.id}…`;
 
     try {
-        const channel = await clientToUse.channels.fetch(server.channelId).catch(() => null);
+        const channel = await bot.client.channels.fetch(server.channelId).catch(() => null);
         if (!channel) {
-            console.log(`❌ [${server.name}] Could not find channel ${server.channelId} for bot ${bot.tag}. Retrying with another bot...`);
-            excludedBotIds.push(bot.id);
-            setTimeout(() => bumpServer(server, excludedBotIds), 2000);
-            return;
+            console.log(`⚠️ [${server.name}] Bot ${bot.id} can't see channel. Trying next bot…`);
+            triedBotIds.push(bot.id);
+            return setTimeout(() => bumpServer(server, triedBotIds), 1500);
         }
 
-        // Send random easter egg
+        // Send easter egg message first
         const randomMsg = easterEggs[Math.floor(Math.random() * easterEggs.length)];
-        await channel.send(randomMsg);
-        console.log(`📢 [${server.name}] (${botShortTag}) Sent: ${randomMsg}`);
+        await channel.send(randomMsg).catch(() => null);
 
-        // Small human-like delay
-        await new Promise(r => setTimeout(r, Math.random() * 3000 + 1500));
+        // Short human-like delay
+        await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000));
 
-        // Send actual /bump and wait for Disboard's response
-        console.log(`🔄 [${server.name}] Sending /bump command using ${botShortTag}...`);
+        // Send /bump slash command
+        console.log(`🔄 [${server.name}] Bot ${bot.id} sending /bump…`);
         await channel.sendSlash(DISBOARD_ID, COMMAND_NAME);
 
-        // Wait up to 15 seconds for Disboard to reply
+        // Wait up to 15 seconds for Disboard's response
         const collected = await channel.awaitMessages({
-            filter: (m) => m.author.id === DISBOARD_ID || (m.interaction && m.interaction.commandName === 'bump'),
+            filter: m => m.author.id === DISBOARD_ID || (m.interaction && m.interaction.commandName === 'bump'),
             max: 1,
             time: 15000
         }).catch(() => null);
@@ -212,246 +140,204 @@ const bumpServer = async (server, excludedBotIds = []) => {
         if (collected && collected.size > 0) {
             const reply = collected.first();
             const content = (reply.content || '') + (reply.embeds?.map(e => e.description || '').join(' ') || '');
-            
-            const contentLower = content.toLowerCase();
-            const successWords = ['bump done', 'bumped', 'erfolgreich', 'sucesso', 'éxito', 'succès', 'succes', 'başarılı', 'sukces', 'успешно', '成功'];
-            const waitWords = ['wait', 'cooldown', 'minute', 'minuten', 'minutos', 'dakika', 'minut', 'warte', '分钟', '分'];
+            const lower = content.toLowerCase();
 
-            if (successWords.some(w => contentLower.includes(w))) {
-                console.log(`✅ [${server.name}] VERIFIED — Disboard confirmed bump!`);
+            const successWords = ['bump done', 'bumped', 'erfolgreich', 'sucesso', 'éxito', 'succès', 'succes', 'başarılı', 'sukces', 'успешно', '成功'];
+            const cooldownWords = ['wait', 'cooldown', 'minute', 'minuten', 'minutos', 'dakika', 'minut', 'warte', '分钟', '分'];
+
+            if (successWords.some(w => lower.includes(w))) {
+                // ✅ SUCCESS
+                console.log(`✅ [${server.name}] Bot ${bot.id} BUMPED successfully!`);
                 globalStats.totalBumps++;
-                server.lastStatus = `✅ Verified (${botShortTag})`;
+                server.lastStatus = `✅ Bumped by Bot ${bot.id}`;
                 bot.lastBumpTime = Date.now();
-                bot.cooldownUntil = Date.now() + 31 * 60 * 1000; 
                 saveStats();
                 scheduleNextBump(server);
-            } else if (waitWords.some(w => contentLower.includes(w))) {
-                const matchMins = content.match(/(\d+)\s*(?:minute|minuten|minutos|minut|dakika|分钟|分)/i);
-                let minutesToWait = 30;
-                if (matchMins && matchMins[1]) {
-                    minutesToWait = parseInt(matchMins[1], 10);
-                }
 
-                console.log(`⏰ [${server.name}] COOLDOWN — Disboard says wait ${minutesToWait} mins. Bot: ${botShortTag}`);
+            } else if (cooldownWords.some(w => lower.includes(w))) {
+                // ⏰ This bot is on Disboard per-user cooldown → try next bot
+                const matchMins = content.match(/(\d+)\s*(?:minute|minuten|minutos|minut|dakika|分钟|分)/i);
+                const minsLeft = matchMins ? parseInt(matchMins[1], 10) : '?';
+                console.log(`⏰ [${server.name}] Bot ${bot.id} is on cooldown (${minsLeft}m). Trying next bot…`);
+                server.lastStatus = `⏰ Bot ${bot.id} on cooldown, trying next…`;
                 globalStats.failedBumps++;
-                
-                if (minutesToWait <= 30) {
-                    console.log(`🔄 [${server.name}] Bot ${botShortTag} is on user cooldown. Marking bot and retrying immediately with another bot...`);
-                    bot.cooldownUntil = Date.now() + (minutesToWait * 60 * 1000) + 10000;
-                    server.lastStatus = "⏰ Bot on cooldown, retrying next...";
-                    saveStats();
-                    setTimeout(() => bumpServer(server, excludedBotIds), 2000);
-                } else {
-                    console.log(`⏳ [${server.name}] Server is on cooldown for ${minutesToWait} mins. Rescheduling server.`);
-                    server.lastStatus = `⏰ Server Cooldown (${minutesToWait}m)`;
-                    saveStats();
-                    scheduleNextBump(server, minutesToWait * 60 * 1000);
-                }
+                saveStats();
+                triedBotIds.push(bot.id);
+                // Small gap then try next bot immediately
+                setTimeout(() => bumpServer(server, triedBotIds), 1500);
+
             } else {
-                console.log(`⚠️ [${server.name}] UNKNOWN response from Disboard: ${content.substring(0, 150)}`);
+                // Unknown response — assume success to avoid infinite loops
+                console.log(`⚠️ [${server.name}] Unknown Disboard response. Treating as success.`);
                 globalStats.totalBumps++;
-                server.lastStatus = `⚠️ Unverified (${botShortTag})`;
+                server.lastStatus = `⚠️ Bumped (unverified) by Bot ${bot.id}`;
                 bot.lastBumpTime = Date.now();
-                bot.cooldownUntil = Date.now() + 31 * 60 * 1000;
                 saveStats();
                 scheduleNextBump(server);
             }
+
         } else {
-            console.log(`❓ [${server.name}] NO RESPONSE — Disboard did not reply within 15s.`);
+            // Disboard didn't reply — assume success or network issue, schedule next
+            console.log(`❓ [${server.name}] No response from Disboard within 15s. Scheduling next bump.`);
             globalStats.failedBumps++;
-            server.lastStatus = "❓ No Response";
+            server.lastStatus = "❓ No response from Disboard";
             saveStats();
             scheduleNextBump(server);
         }
+
     } catch (e) {
-        console.error(`❌ [${server.name}] ERROR with bot ${botShortTag}: ${e.message}`);
+        console.error(`❌ [${server.name}] Error with Bot ${bot.id}: ${e.message}`);
         globalStats.failedBumps++;
-        server.lastStatus = `❌ ${e.message.substring(0, 50)}`;
+        server.lastStatus = `❌ Bot ${bot.id} error`;
         saveStats();
-        
-        excludedBotIds.push(bot.id);
-        setTimeout(() => bumpServer(server, excludedBotIds), 2000);
+        triedBotIds.push(bot.id);
+        setTimeout(() => bumpServer(server, triedBotIds), 2000);
     }
 };
 
-const simulateActivity = async () => {
-    if (activityChannels.length === 0) return;
+const scheduleNextBump = (server, customMs = null) => {
+    const intervalMs = customMs ?? ((2 * 60 * 60 * 1000) + (Math.floor(Math.random() * 10) * 60 * 1000));
+    server.nextBumpTime = Date.now() + intervalMs;
+    console.log(`⏳ [${server.name}] Next bump in ${Math.round(intervalMs / 60000)} minutes`);
 
-    const randomConfig = activityChannels[Math.floor(Math.random() * activityChannels.length)];
-    const readyBots = botPool.filter(b => b.ready);
-    
-    if (readyBots.length > 0) {
-        const bot = readyBots[Math.floor(Math.random() * readyBots.length)];
-        try {
-            const channel = await bot.client.channels.fetch(randomConfig.channelId);
-            if (channel) {
-                const randomMsg = activityMessages[Math.floor(Math.random() * activityMessages.length)];
-                await channel.send(randomMsg);
-                console.log(`💬 [Activity] Bot ${bot.tag.split('#')[0]} sent to ${randomConfig.name}: ${randomMsg}`);
-            }
-        } catch (e) {
-            console.error(`❌ [Activity] Error with bot ${bot.tag.split('#')[0]} in ${randomConfig.name}:`, e.message);
-        }
-    }
-
-    const nextActivityMin = Math.floor(Math.random() * 30) + 15;
-    setTimeout(simulateActivity, nextActivityMin * 60 * 1000);
+    if (bumpTimers.has(server.channelId)) clearTimeout(bumpTimers.get(server.channelId));
+    const tid = setTimeout(() => bumpServer(server), intervalMs);
+    bumpTimers.set(server.channelId, tid);
 };
 
 let managerStarted = false;
 const startManagerOnce = () => {
     if (managerStarted) return;
     managerStarted = true;
-    console.log(`🔄 Multi-server auto bump manager started (${servers.length} servers configured)`);
+    console.log(`🚀 Bump manager started — ${servers.length} server(s) configured`);
 
-    // Start initial servers with stagger
-    for (let i = 0; i < servers.length; i++) {
-        servers[i].lastStatus = "⏳ Waiting...";
-        if (servers[i].channelId && !servers[i].channelId.includes("HERE")) {
-            servers[i].nextBumpTime = Date.now() + (i * 8000);
-            setTimeout(() => bumpServer(servers[i]), i * 8000);
+    servers.forEach((server, i) => {
+        server.lastStatus = "⏳ Starting…";
+        if (server.channelId && !server.channelId.includes('HERE')) {
+            server.nextBumpTime = Date.now() + (i * 8000);
+            setTimeout(() => bumpServer(server), i * 8000);
         } else {
-            servers[i].lastStatus = "⚠️ Not Configured";
+            server.lastStatus = "⚠️ Not configured";
         }
-    }
-
-    // Start activity simulation
-    if (activityChannels.length > 0 && activityChannels[0].channelId !== "ACTIVITY_CHANNEL_ID_HERE") {
-        simulateActivity();
-    }
+    });
 };
 
-// Web API Endpoint to add new server
+// ─── API Routes ───────────────────────────────
+
 app.post('/api/add-server', async (req, res) => {
-    const { inviteLink, channelId } = req.body;
-    if (!inviteLink || !channelId) {
-        return res.status(400).json({ error: "Missing inviteLink or channelId" });
-    }
+    const { inviteLink, channelId, serverName } = req.body;
+    if (!channelId) return res.status(400).json({ error: "Missing channelId" });
 
     try {
-        let inviteCode = inviteLink;
-        const match = inviteLink.match(/(?:discord\.gg\/|discord\.com\/invite\/)(.+)/i);
-        if (match && match[1]) inviteCode = match[1];
+        let guildName = serverName || '';
 
-        const activeBots = botPool.filter(b => b.ready);
-        if (activeBots.length === 0) {
-            return res.status(500).json({ error: "No bot accounts are currently online/ready to join." });
+        if (inviteLink) {
+            const match = inviteLink.match(/(?:discord\.gg\/|discord\.com\/invite\/)(.+)/i);
+            const inviteCode = (match && match[1]) ? match[1] : inviteLink;
+
+            const activeBots = botPool.filter(b => b.ready);
+            if (activeBots.length === 0) return res.status(500).json({ error: "No bots are online." });
+
+            const results = await Promise.all(activeBots.map(async bot => {
+                try {
+                    const guild = await bot.client.acceptInvite(inviteCode);
+                    if (!guildName) guildName = guild.name;
+                    return { success: true };
+                } catch (e) {
+                    return { success: false };
+                }
+            }));
+
+            if (!results.some(r => r.success)) throw new Error("All bots failed to join.");
         }
 
-        console.log(`🌐 Joining server invite ${inviteCode} with ${activeBots.length} bots...`);
-        let guildName = "";
-
-        const joinPromises = activeBots.map(async (bot) => {
-            try {
-                const guild = await bot.client.acceptInvite(inviteCode);
-                if (!guildName) guildName = guild.name;
-                console.log(`✅ Bot ${bot.tag} successfully joined: ${guild.name}`);
-                return { tag: bot.tag, success: true };
-            } catch (e) {
-                console.error(`❌ Bot ${bot.tag} failed to join: ${e.message}`);
-                return { tag: bot.tag, success: false, error: e.message };
-            }
-        });
-
-        const results = await Promise.all(joinPromises);
-        const successfulJoins = results.filter(r => r.success);
-
-        if (successfulJoins.length === 0) {
-            throw new Error(`All bots failed to join. Try verifying invite code or token validity.`);
-        }
-
-        const serverName = guildName || `Server (${channelId})`;
-        const newServer = {
-            name: serverName,
-            channelId: channelId
-        };
-
+        const name = guildName || `Server (${channelId})`;
+        const newServer = { name, channelId, lastStatus: "⏳ Starting…" };
         servers.push(newServer);
         fs.writeFileSync(DATA_FILE, JSON.stringify(servers, null, 4));
-
-        // Trigger immediate bump
         bumpServer(newServer);
-
-        res.json({ 
-            success: true, 
-            message: `Joined ${serverName} with ${successfulJoins.length}/${activeBots.length} bots and started bumping!` 
-        });
-    } catch (error) {
-        console.error(`❌ WebUI: Failed to join server:`, error.message);
-        res.status(500).json({ error: `Failed to join server: ${error.message}` });
+        res.json({ success: true, message: `Added ${name} and starting bumps!` });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
-// Web API Endpoint to get stats
 app.get('/api/stats', (req, res) => {
-    const activeServers = servers.filter(s => s.channelId && !s.channelId.includes("HERE")).map(s => ({
-        name: s.name,
-        channelId: s.channelId,
-        lastStatus: s.lastStatus || "⏳ Waiting...",
-        nextBumpTime: s.nextBumpTime || null
+    const activeServers = servers
+        .filter(s => s.channelId && !s.channelId.includes('HERE'))
+        .map(s => ({
+            name: s.name,
+            channelId: s.channelId,
+            lastStatus: s.lastStatus || "⏳ Waiting…",
+            nextBumpTime: s.nextBumpTime || null
+        }));
+
+    const bots = botPool.map(b => ({
+        id: b.id,
+        tag: b.tag,
+        ready: b.ready,
+        status: b.status,
+        lastBumpTime: b.lastBumpTime,
+        error: b.error
     }));
 
-    const botsStatus = botPool.map(bot => ({
-        id: bot.id,
-        tag: bot.tag,
-        ready: bot.ready,
-        cooldownUntil: bot.cooldownUntil,
-        lastBumpTime: bot.lastBumpTime,
-        error: bot.error
-    }));
-
-    res.json({
-        global: globalStats,
-        servers: activeServers,
-        bots: botsStatus
-    });
+    res.json({ global: globalStats, servers: activeServers, bots });
 });
 
-// Web API Endpoint to cancel a server's auto bump
 app.post('/api/cancel-server', (req, res) => {
     const { channelId } = req.body;
-    if (!channelId) {
-        return res.status(400).json({ error: "Missing channelId" });
-    }
+    if (!channelId) return res.status(400).json({ error: "Missing channelId" });
     const server = servers.find(s => s.channelId === channelId);
-    if (!server) {
-        return res.status(404).json({ error: "Server not found" });
-    }
-    
-    const timerId = bumpTimers.get(channelId);
-    if (timerId) {
-        clearTimeout(timerId);
+    if (!server) return res.status(404).json({ error: "Server not found" });
+
+    if (bumpTimers.has(channelId)) {
+        clearTimeout(bumpTimers.get(channelId));
         bumpTimers.delete(channelId);
     }
     server.lastStatus = "❌ Cancelled";
     fs.writeFileSync(DATA_FILE, JSON.stringify(servers, null, 4));
-    res.json({ success: true, message: `Auto bump cancelled for ${server.name}` });
+    res.json({ success: true });
 });
 
-// Start Web Server
-const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`🌐 Web interface running at http://localhost:${PORT}`);
+app.delete('/api/remove-server', (req, res) => {
+    const { channelId } = req.body;
+    if (!channelId) return res.status(400).json({ error: "Missing channelId" });
+    if (bumpTimers.has(channelId)) {
+        clearTimeout(bumpTimers.get(channelId));
+        bumpTimers.delete(channelId);
+    }
+    servers = servers.filter(s => s.channelId !== channelId);
+    fs.writeFileSync(DATA_FILE, JSON.stringify(servers, null, 4));
+    res.json({ success: true });
 });
 
-// Log in all bots
-console.log(`🔌 Logging in ${botPool.length} bot account(s)...`);
+// ─── Web Server ───────────────────────────────
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🌐 Dashboard running at http://localhost:${PORT}`));
+
+// ─── Login all bots ───────────────────────────
+
+console.log(`🔌 Logging in ${botPool.length} bot(s)…`);
 botPool.forEach(bot => {
     bot.client.on('ready', () => {
         bot.ready = true;
+        bot.status = 'online';
         bot.tag = bot.client.user.tag;
         bot.error = null;
         console.log(`✅ Bot [${bot.id}] online as ${bot.tag}`);
         startManagerOnce();
     });
 
-    bot.client.on('error', (err) => {
-        console.error(`❌ Bot [${bot.id}] error: ${err.message}`);
+    bot.client.on('error', err => {
+        bot.status = 'error';
         bot.error = err.message;
+        console.error(`❌ Bot [${bot.id}] error: ${err.message}`);
     });
 
     bot.client.login(bot.token).catch(err => {
-        console.error(`❌ Bot [${bot.id}] login failed: ${err.message}`);
+        bot.status = 'error';
         bot.error = err.message;
+        console.error(`❌ Bot [${bot.id}] login failed: ${err.message}`);
     });
 });
