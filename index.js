@@ -48,7 +48,23 @@ const easterEggs = [
     "brophet bumhoamad has arrived 🙏",
     "time for the holy bump",
     "big bump energy",
-    "bump lord is here"
+    "bump lord is here",
+    "fat bumpers assemble 🍔",
+    "get bumped on nerds 🤓",
+    "i came, i saw, i bumped 🏛️",
+    "to bump or not to bump, that is the question 🎭",
+    "you miss 100% of the bumps you don't take 🏀",
+    "bumping is my passion ❤️‍🔥",
+    "keep calm and bump on ☕",
+    "bumping my way to the top 🧗",
+    "out of my way, professional bumper coming through 🕴️",
+    "did someone say bump? 👂",
+    "it's bumping time ⌚",
+    "bump it like it's hot 🔥",
+    "another day, another bump 🌅",
+    "may the bump be with you 🌌",
+    "bumping: a lifestyle choice ✨",
+    "i'm just a bot standing in front of a server, asking it to bump me 🥺"
 ];
 
 // Analytics — load from disk so counts survive restarts
