@@ -139,7 +139,10 @@ const bumpServer = async (server, triedBotIds = [], isFirstAttempt = true) => {
     server.lastStatus = `🔄 Trying Bot ${bot.id}…`;
 
     try {
-        const channel = await bot.client.channels.fetch(server.channelId).catch(() => null);
+        const channel = await bot.client.channels.fetch(server.channelId).catch((err) => {
+            console.error(`❌ [${server.name}] Channel fetch error for Bot ${bot.id}: ${err.message || err}`);
+            return null;
+        });
         if (!channel) {
             console.log(`⚠️ [${server.name}] Bot ${bot.id} can't see channel. Trying next bot…`);
             triedBotIds.push(bot.id);
